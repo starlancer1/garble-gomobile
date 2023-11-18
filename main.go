@@ -23,6 +23,7 @@ import (
 	"io/fs"
 	"log"
 	mathrand "math/rand"
+	"mvdan.cc/garble/mobile/shared"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -126,6 +127,7 @@ Similarly, to combine garble flags and Go build flags:
 The following commands are supported:
 
 	build          replace "go build"
+    mobile         replace "gomobile"
 	test           replace "go test"
 	run            replace "go run"
 	reverse        de-obfuscate output such as stack traces
@@ -318,6 +320,8 @@ garble was built with %q and is being used with %q; rebuild it with a command li
 func mainErr(args []string) error {
 	command, args := args[0], args[1:]
 
+	resetPath()
+
 	// Catch users reaching for `go build -toolexec=garble`.
 	if command != "toolexec" && len(args) == 1 && args[0] == "-V=full" {
 		return fmt.Errorf(`did you run "go [command] -toolexec=garble" instead of "garble [command]"?`)
@@ -401,6 +405,7 @@ func mainErr(args []string) error {
 	case "reverse":
 		return commandReverse(args)
 	case "build", "test", "run":
+
 		cmd, err := toolexecCmd(command, args)
 		defer func() {
 			if err := os.RemoveAll(os.Getenv("GARBLE_SHARED")); err != nil {
@@ -424,6 +429,36 @@ func mainErr(args []string) error {
 		cmd.Stderr = os.Stderr
 		log.Printf("calling via toolexec: %s", cmd)
 		return cmd.Run()
+
+	case "mobile":
+
+		binDir, err := maybeInstallGoRedirectionBinary()
+		if err != nil {
+			return err
+		}
+
+		// ensure gomobile is found in PATH
+		_, err = exec.LookPath("gomobile")
+		if err != nil {
+			return errors.New("gomobile not found in PATH")
+		}
+
+		goBinaryPath, err := exec.LookPath("go")
+		if err != nil {
+			return errors.New("go not found in PATH")
+		}
+
+		// This env var will be read by our go redirection binary so that it knows where to look for the real go binary
+		os.Setenv("GARBLE_OG_GO", goBinaryPath)
+
+		// Add the directory of our go redirection binary to the PATH env var so that when gomobile
+		// calls "go build", our binary will be called instead, which will in turn call "garble build"
+		err = prependToPath(binDir)
+		if err != nil {
+			return fmt.Errorf("unable to modify PATH env var: %w", err)
+		}
+
+		return exec.Command("gomobile", args...).Run()
 
 	case "toolexec":
 		_, tool := filepath.Split(args[0])
@@ -490,6 +525,85 @@ func mainErr(args []string) error {
 	default:
 		return fmt.Errorf("unknown command: %q", command)
 	}
+}
+
+// If "garble mobile" was called previously, it modified our path. We want to reset it so that we will call
+// the real go binary instead of our redirection binary.
+func resetPath() {
+	path := os.Getenv("PATH")
+	if !strings.Contains(path, "garble") {
+		return
+	}
+	path = trimUntilChar(path, os.PathListSeparator)
+	os.Setenv("PATH", path)
+}
+
+func trimUntilChar(s string, c rune) string {
+	index := strings.IndexRune(s, c)
+	if index == -1 {
+		return s // Character not found, return the original string
+	}
+	return s[index+1:] // Slice the string from the character onwards
+}
+
+// Install our go redirection binary if it is not already installed.
+func maybeInstallGoRedirectionBinary() (binDir string, err error) {
+
+	binDir, err = shared.GarbleBinDir()
+	if err != nil {
+		return "", err
+	}
+
+	garbleGo := filepath.Join(binDir, "go")
+
+	// check whether our go redirection binary is already installed or not
+	var garbleGoExists = true
+	_, err = os.Stat(garbleGo)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			garbleGoExists = false
+		} else {
+			return "", fmt.Errorf("failed to check if garble go redirection available: %w", err)
+		}
+	}
+
+	if garbleGoExists {
+		return binDir, nil
+	}
+
+	err = os.MkdirAll(binDir, os.FileMode(0755))
+	if err != nil {
+		return "", err
+	}
+
+	ogGoBin := os.Getenv("GOBIN") // store original value
+
+	// sets where the binary will be installed. we don't want to install to the normal gobin dir
+	// because that dir is always in the users PATH. if we installed to a location in the users PATH,
+	// our redirection binary named 'go' would conflict with the real go binary in the PATH.
+	err = os.Setenv("GOBIN", binDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to set GOBIN env var: %w", err)
+	}
+	defer os.Setenv("GOBIN", ogGoBin) // set back to original value
+
+	// note: this will always install from github, so if you want to install dev version locally, you should
+	// do it manually from the project directory.
+	// example bash command for dev: mkdir -p ~/.garble/bin && GOBIN=~/.garble/bin go install mvdan.cc/garble/mobile/go
+
+	return binDir, exec.Command("go", "install", "mvdan.cc/garble/mobile/go@latest}").Run()
+}
+
+func prependToPath(dir string) error {
+	// Normalize based on OS
+	dir = filepath.FromSlash(dir)
+
+	path := os.Getenv("PATH")
+
+	// Append the directory to the PATH
+	path = dir + string(os.PathListSeparator) + path
+
+	return os.Setenv("PATH", path)
 }
 
 func hasHelpFlag(flags []string) bool {
