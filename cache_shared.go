@@ -148,6 +148,9 @@ type listedPackage struct {
 	CompiledGoFiles []string // all .go files to build
 	SFiles          []string // all .s (asm) files to build
 	Imports         []string
+	Module          struct {
+		Main bool // true if is a package from the project (not an external dep)
+	}
 
 	Error *packageError // to report package loading errors to the user
 
