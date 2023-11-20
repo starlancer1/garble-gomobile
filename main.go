@@ -459,7 +459,7 @@ func mainErr(args []string) error {
 		}
 
 		// This env var will be read when redirecting to the real go binary
-		os.Setenv("GARBLE_OG_GO", goBinaryPath)
+		os.Setenv(garbleOgGo, goBinaryPath)
 
 		// Add the tmp dir to the PATH env var so that when gomobile
 		// calls "go build", our binary will be called instead.
@@ -2025,6 +2025,13 @@ func (tf *transformer) transformGoFile(file *ast.File) *ast.File {
 		if !lpkg.ToObfuscate {
 			return true // we're not obfuscating this package
 		}
+
+		usingGoMobile := os.Getenv(garbleOgGo) != ""
+		// gobind (used by gomobile) requires that exported symbols of the main packages not be obfuscated.
+		if usingGoMobile && lpkg.Module.Main && node.IsExported() {
+			return true
+		}
+
 		hashToUse := lpkg.GarbleActionID
 		debugName := "variable"
 

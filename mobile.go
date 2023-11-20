@@ -12,10 +12,13 @@ import (
 	"syscall"
 )
 
+// The path to the real go binary is stored under this key in environment
+const garbleOgGo = "GARBLE_OG_GO"
+
 // If go mobile calls this binary with a command other than "build" we need to call the real go binary.
 func redirectToOgGo(args []string) int {
 
-	command := os.Getenv("GARBLE_OG_GO")
+	command := os.Getenv(garbleOgGo)
 
 	cmd := exec.Command(command, args...)
 	cmd.Stdout = os.Stdout
