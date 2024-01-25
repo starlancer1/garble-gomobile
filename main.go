@@ -171,6 +171,7 @@ func main1() int {
 	if err := flagSet.Parse(os.Args[1:]); err != nil {
 		return 2
 	}
+
 	log.SetPrefix("[garble] ")
 	log.SetFlags(0) // no timestamps, as they aren't very useful
 
